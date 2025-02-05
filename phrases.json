@@ -1,0 +1,16 @@
+{
+    "play_music": ["play music", "start music"],
+    "pause_music": ["pause music", "stop music"],
+    "skip_song": ["skip song", "next song"],
+    "increase_volume": ["increase volume", "volume up"],
+    "decrease_volume": ["decrease volume", "volume down"],
+    "request_song": ["play the song", "play song"],
+    "list_playlists": ["list playlists", "show playlists"],
+    "play_playlist": ["play playlist"],
+    "add_task": ["add task"],
+    "remove_task": ["remove task"],
+    "complete_task": ["complete task"],
+    "list_tasks": ["list tasks", "show tasks"],
+    "bulk_add_tasks": ["bulk add tasks", "add multiple tasks"],
+    "display_list": ["display list", "show list"]
+}

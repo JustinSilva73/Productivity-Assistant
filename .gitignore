@@ -1,0 +1,7 @@
+.venv
+*.pem
+logs/
+.env
+__pycache__/
+transcription.wav
+voice_assistant.log
