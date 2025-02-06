@@ -1,56 +1,47 @@
 import discord
-from discord.ext import commands
+import asyncio
+import os
+from datetime import datetime
+from VoiceAssistant import VoiceAssistant
+from dotenv import load_dotenv
 
-class DiscordBot(commands.Bot):
-    def __init__(self, command_prefix, intents):
-        # Initialize the bot with the given command prefix and intents.
-        super().__init__(command_prefix=command_prefix, intents=intents)
+# Load environment variables from .env file
+load_dotenv()
 
-    async def on_ready(self):
-        # This method is called when the bot has successfully connected.
-        print(f"Logged in as {self.user} (ID: {self.user.id})")
+class DiscordBot:
+    def __init__(self, voice_assistant):
+        self.token = os.getenv('DISCORD_TOKEN')
+        self.application_id = os.getenv('DISCORD_APPLICATION_ID')
+        self.public_key = os.getenv('DISCORD_PUBLIC_KEY')
+        self.voice_assistant = voice_assistant
+        self.client = discord.Client()
 
-    async def send_message_to_user(self, user_id: int, message: str):
-        """
-        Sends a direct message to the user with the given user_id.
+        @self.client.event
+        async def on_ready():
+            print(f'Logged in as {self.client.user}')
+            await self.send_daily_todo_list()
 
-        Parameters:
-        - user_id (int): The Discord ID of the user to message.
-        - message (str): The message content to send.
-        """
-        # Try to get the user from the cache.
-        user = self.get_user(user_id)
-        if user is None:
-            try:
-                # If the user is not in cache, fetch the user.
-                user = await self.fetch_user(user_id)
-            except discord.NotFound:
-                print(f"User with ID {user_id} not found.")
+        @self.client.event
+        async def on_message(message):
+            if message.author == self.client.user:
                 return
 
-        try:
-            await user.send(message)
-            print(f"Message sent to user {user.name} (ID: {user.id}).")
-        except Exception as e:
-            print(f"Failed to send message to user {user_id}: {e}")
+            if isinstance(message.channel, discord.DMChannel):
+                response = self.voice_assistant.handle_transcription(message.content)
+                await message.channel.send(response)
 
-if __name__ == '__main__':
-    # Set up the required intents. 'members' intent can help ensure we can fetch users.
-    intents = discord.Intents.default()
-    intents.members = True
+    async def send_daily_todo_list(self):
+        await self.client.wait_until_ready()
+        while not self.client.is_closed():
+            now = datetime.now()
+            if now.hour == 5 and now.minute == 0:
+                tasks = self.voice_assistant.list_tasks()
+                user = await self.client.fetch_user()  # Replace with your user ID
+                await user.send(f"Good morning! Here is your to-do list for today:\n{tasks}")
+                await asyncio.sleep(60)  # Wait a minute to avoid sending multiple messages
+            await asyncio.sleep(1)  # Check every second
 
-    # Create an instance of the bot with the desired command prefix.
-    bot = DiscordBot(command_prefix="!", intents=intents)
-    token = "YOUR_BOT_TOKEN"  # Replace with your actual bot token.
-
-    # Optional: Create a command for demonstration purposes.
-    @bot.command()
-    async def dm(ctx, user_id: int, *, message: str):
-        """
-        Command to send a DM to a specified user.
-        Usage: !dm <user_id> <message>
-        """
-        await bot.send_message_to_user(user_id, message)
-        await ctx.send(f"Attempted to send DM to user with ID {user_id}.")
-
-    bot.run(token)
+    def run(self):
+        loop = asyncio.get_event_loop()
+        loop.create_task(self.send_daily_todo_list())
+        self.client.run(self.token)
