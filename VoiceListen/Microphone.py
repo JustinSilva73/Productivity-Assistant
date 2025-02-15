@@ -11,54 +11,56 @@ class Microphone:
     def __init__(self, activation_phrase="jarvis"):
         self.activation_phrase = activation_phrase
         self.recognizer = sr.Recognizer()
+        # Enable dynamic energy threshold adjustment
+        self.recognizer.dynamic_energy_threshold = True
+
         self.microphone = sr.Microphone()
         self.transcription_queue = queue.Queue()
         self.audio_queue = queue.Queue()
         self.recording = False
+        self.listening_for_activation = True
 
         signal.signal(signal.SIGINT, self.signal_handler)
 
-        # Initialize PyAudio
-        self.pyaudio = pyaudio.PyAudio()
-        self.input_stream = self.pyaudio.open(format=pyaudio.paInt16,
-                                              channels=1,
-                                              rate=16000,
-                                              input=True,
-                                              frames_per_buffer=1024,
-                                              stream_callback=self.callback)
-        self.output_stream = self.pyaudio.open(format=pyaudio.paInt16,
-                                               channels=1,
-                                               rate=16000,
-                                               output=True)
+        # Perform one-time ambient noise calibration
+        with self.microphone as source:
+            print("Calibrating for ambient noise... Please wait.")
+            self.recognizer.adjust_for_ambient_noise(source, duration=2)
+            print(f"Set energy threshold to {self.recognizer.energy_threshold}")
 
     def signal_handler(self, sig, frame):
         print("\nExiting...")
-        self.input_stream.stop_stream()
-        self.input_stream.close()
-        self.output_stream.stop_stream()
-        self.output_stream.close()
-        self.pyaudio.terminate()
         sys.exit(0)
-
-    def callback(self, in_data, frame_count, time_info, status):
-        if self.recording:
-            self.audio_queue.put(in_data)
-        return (in_data, pyaudio.paContinue)
 
     def listen(self):
         while True:
             with self.microphone as source:
-                self.recognizer.adjust_for_ambient_noise(source)
-                self.recognizer.pause_threshold = 2  # Adjust pause threshold for end of phrase detection
-                audio = self.recognizer.listen(source, phrase_time_limit=10)  # Adjust phrase_time_limit as needed
+                # Adjust thresholds based on state
+                if self.listening_for_activation:
+                    self.recognizer.pause_threshold = 0.7      # Increase pause threshold for better detection
+                    self.recognizer.non_speaking_duration = 0.5  # Increase non_speaking_duration
+                    phrase_time_limit = 3                        # Expect a very short utterance
+                else:
+                    self.recognizer.pause_threshold = 1.0
+                    self.recognizer.non_speaking_duration = 0.7
+                    phrase_time_limit = 10
 
-            try:
-                transcription = self.recognizer.recognize_google(audio).lower()
-                self.transcription_queue.put(transcription)
-            except sr.UnknownValueError:
-                continue
-            except sr.RequestError as e:
-                print(f"Could not request results; {e}")
+                # Listen for speech (you may adjust phrase_time_limit as needed)
+                try:
+                    audio = self.recognizer.listen(source, phrase_time_limit=10)
+                    transcription = self.recognizer.recognize_google(audio, language="en-US").lower()
+                    print(f"Transcription: {transcription}")
+
+                    if self.listening_for_activation:
+                        if transcription.strip() == self.activation_phrase:
+                            self.transcription_queue.put(self.activation_phrase)
+                            self.listening_for_activation = False
+                    else:
+                        self.transcription_queue.put(transcription)
+                except sr.UnknownValueError:
+                    pass  # Suppress "Could not understand audio" message
+                except sr.RequestError as e:
+                    print(f"Could not request results; {e}")
 
     def listen_in_background(self):
         listen_thread = threading.Thread(target=self.listen, daemon=True)
@@ -71,9 +73,10 @@ class Microphone:
         self.recording = False
 
     def save_audio(self, filename):
+        # Save any recorded audio from the queue
         wf = wave.open(filename, 'wb')
         wf.setnchannels(1)
-        wf.setsampwidth(self.pyaudio.get_sample_size(pyaudio.paInt16))
+        wf.setsampwidth(pyaudio.PyAudio().get_sample_size(pyaudio.paInt16))
         wf.setframerate(16000)
         while not self.audio_queue.empty():
             wf.writeframes(self.audio_queue.get())
@@ -81,14 +84,19 @@ class Microphone:
 
     def play_audio(self, filename):
         wf = wave.open(filename, 'rb')
-        stream = self.pyaudio.open(format=self.pyaudio.get_format_from_width(wf.getsampwidth()),
-                                   channels=wf.getnchannels(),
-                                   rate=wf.getframerate(),
-                                   output=True)
+        pa = pyaudio.PyAudio()
+        stream = pa.open(format=pa.get_format_from_width(wf.getsampwidth()),
+                         channels=wf.getnchannels(),
+                         rate=wf.getframerate(),
+                         output=True)
         data = wf.readframes(1024)
         while data:
             stream.write(data)
             data = wf.readframes(1024)
         stream.stop_stream()
         stream.close()
+        pa.terminate()
         wf.close()
+
+    def reset_listening_state(self):
+        self.listening_for_activation = True
