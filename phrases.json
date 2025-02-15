@@ -12,5 +12,6 @@
     "complete_task": ["complete task"],
     "list_tasks": ["list tasks", "show tasks"],
     "bulk_add_tasks": ["bulk add tasks", "add multiple tasks"],
-    "display_list": ["display list", "show list"]
+    "display_list": ["display list", "show list"],
+    "open_file": ["open file", "open document"]
 }

@@ -4,6 +4,7 @@ from fuzzywuzzy import fuzz
 import azure.cognitiveservices.speech as speechsdk
 import logging
 from Database.StoreTranscriptions.TranscriptionSent import TranscriptionStore
+from FileDirectory.FileAccess import FileAccess
 from OpenAI.Assistant import JarvisAssistant
 from ToDo.ToDoList import ToDoList
 from ToDo.DisplayList.DisplayList import TaskDisplay
@@ -235,7 +236,25 @@ class VoiceAssistant:
         self.task_display.root.after(0, self.task_display.root.deiconify)  # Show the GUI
 
 
+    def open_file(self, transcription):
+        activation_phrases = self.phrases_to_functions.get("open_file", [])
+        for phrase in activation_phrases:
+            if phrase in transcription.lower():
+                file_name = transcription.lower().split(phrase, 1)[1].strip()
+                try:
+                    file_access = FileAccess()  # Instantiate without arguments
+                    result = file_access.open_file(file_name)
+                    logging.info(result)
+                    return result
+                except Exception as e:
+                    logging.error(f"Error opening file: {str(e)}")
+                    return f"Failed to open file. Error: {str(e)}"
+        return "No valid activation phrase found in transcription."
+
     def speak(self, text):
+        if "GenTopic:" in text:
+            text = text.split("GenTopic:")[0].strip()
+
         ssml_template = f"""
         <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="en-US">
             <voice name="{self.speech_config.speech_synthesis_voice_name}">
