@@ -12,19 +12,37 @@ import json
 from datetime import date
 import threading
 import queue
+from ctypes import cast, POINTER
+from comtypes import CLSCTX_ALL
+from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 
 # Set up logging to a file with timestamps
 logging.basicConfig(filename='voice_assistant.log', level=logging.INFO, format='%(asctime)s %(message)s')
 
+# Static variable for deactivation timer duration
+DEACTIVATION_TIMER_DURATION = 30  # seconds
+
 class ActivationManager:
     def __init__(self):
         self.active = False
+        self.deactivation_timer = None
 
     def activate(self):
         self.active = True
+        self.reset_deactivation_timer()
 
     def deactivate(self):
         self.active = False
+        logging.info("Deactivation timer expired. Voice assistant deactivated.")
+
+    def reset_deactivation_timer(self):
+        if self.deactivation_timer:
+            self.deactivation_timer.cancel()
+        self.deactivation_timer = threading.Timer(DEACTIVATION_TIMER_DURATION, self.deactivate)
+        self.deactivation_timer.start()
+
+    def is_active(self):
+        return self.active
 
 class VoiceAssistant:
     def __init__(self, spotify, jarvis, mic, phrases_to_functions, speech_synthesizer, speech_config, volume, speed, activation_word="endeavor"):
@@ -46,6 +64,7 @@ class VoiceAssistant:
         self.bulk_add_mode = False
         self.transcription_count = 0
         self.gui_queue = queue.Queue()
+        self.original_volume = None  # Store the original volume
 
     def create_phrase_to_function_mapping(self):
         phrase_to_function = {}
@@ -61,17 +80,42 @@ class VoiceAssistant:
             logging.info(f"Input Transcription: {transcription}")
             print(f"Input Transcription: {transcription}")
 
-            #self.save_audio_transcription()
+            # Reset the deactivation timer on every transcription
+            self.activation_manager.reset_deactivation_timer()
 
             if self.activation_word in transcription.lower():
                 self.activation_manager.activate()
+                self.lower_system_volume()
                 logging.info("Activation word detected. Voice assistant activated.")
                 print("Activation word detected. Voice assistant activated.")
+                continue  # Skip processing the activation word
 
-            if self.activation_manager.active or self.bulk_add_mode:
+            if self.activation_manager.is_active() or self.bulk_add_mode:
+                self.restore_system_volume()  # Restore volume before handling transcription
                 response = self.handle_transcription(transcription)
                 if response:
                     self.speak(response)
+
+            # Clear the most recent transcription from the queue
+            self.mic.transcription_queue.task_done()
+
+    def lower_system_volume(self):
+        devices = AudioUtilities.GetSpeakers()
+        interface = devices.Activate(
+            IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+        volume = cast(interface, POINTER(IAudioEndpointVolume))
+        self.original_volume = volume.GetMasterVolumeLevel()
+        volume.SetMasterVolumeLevel(-30.0, None)  # Lower volume to 10%
+        logging.info("System volume lowered to 10%.")
+
+    def restore_system_volume(self):
+        if self.original_volume is not None:
+            devices = AudioUtilities.GetSpeakers()
+            interface = devices.Activate(
+                IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+            volume = cast(interface, POINTER(IAudioEndpointVolume))
+            volume.SetMasterVolumeLevel(self.original_volume, None)  # Restore original volume
+            logging.info("System volume restored to original level.")
 
     def save_audio_transcription(self):
         self.transcription_count += 1

@@ -6,6 +6,7 @@ import signal
 import speech_recognition as sr
 import pyaudio
 import wave
+import logging
 
 class Microphone:
     def __init__(self, activation_phrase="jarvis"):
@@ -19,18 +20,29 @@ class Microphone:
         self.audio_queue = queue.Queue()
         self.recording = False
         self.listening_for_activation = True
+        self.cleaned_up = False  # Flag to indicate if cleanup has been performed
 
         signal.signal(signal.SIGINT, self.signal_handler)
 
         # Perform one-time ambient noise calibration
         with self.microphone as source:
             print("Calibrating for ambient noise... Please wait.")
-            self.recognizer.adjust_for_ambient_noise(source, duration=2)
+            self.recognizer.adjust_for_ambient_noise(source, duration=5)  # Increase calibration duration
             print(f"Set energy threshold to {self.recognizer.energy_threshold}")
 
     def signal_handler(self, sig, frame):
-        print("\nExiting...")
-        sys.exit(0)
+        if not self.cleaned_up:
+            print("\nExiting...")
+            logging.info("Exiting...")
+            self.cleanup()
+
+    def cleanup(self):
+        if not self.cleaned_up:
+            # Perform any necessary cleanup here
+            self.recording = False
+            self.listening_for_activation = False
+            logging.info("Cleanup completed.")
+            self.cleaned_up = True
 
     def listen(self):
         while True:
@@ -47,7 +59,7 @@ class Microphone:
 
                 # Listen for speech (you may adjust phrase_time_limit as needed)
                 try:
-                    audio = self.recognizer.listen(source, phrase_time_limit=10)
+                    audio = self.recognizer.listen(source, phrase_time_limit=phrase_time_limit)
                     transcription = self.recognizer.recognize_google(audio, language="en-US").lower()
                     print(f"Transcription: {transcription}")
 
@@ -55,8 +67,10 @@ class Microphone:
                         if transcription.strip() == self.activation_phrase:
                             self.transcription_queue.put(self.activation_phrase)
                             self.listening_for_activation = False
+                            logging.info("Activation word detected. Listening for next phrase.")
                     else:
                         self.transcription_queue.put(transcription)
+                        self.listening_for_activation = True  # Reset to listen for activation word again
                 except sr.UnknownValueError:
                     pass  # Suppress "Could not understand audio" message
                 except sr.RequestError as e:
