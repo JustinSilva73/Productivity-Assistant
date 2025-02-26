@@ -13,14 +13,19 @@ from datetime import date
 import threading
 import queue
 from ctypes import cast, POINTER
-from comtypes import CLSCTX_ALL
-from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+import platform
+import subprocess
 
-# Set up logging to a file with timestamps
+# Set up logging to a file with timestamps  
 logging.basicConfig(filename='voice_assistant.log', level=logging.INFO, format='%(asctime)s %(message)s')
 
 # Static variable for deactivation timer duration
 DEACTIVATION_TIMER_DURATION = 30  # seconds
+
+# Platform-specific imports
+if platform.system() == "Windows":
+    from comtypes import CLSCTX_ALL
+    from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 
 class ActivationManager:
     def __init__(self):
@@ -65,6 +70,7 @@ class VoiceAssistant:
         self.transcription_count = 0
         self.gui_queue = queue.Queue()
         self.original_volume = None  # Store the original volume
+        self.volume_lowered = False  # Flag to track if volume has been lowered
 
     def create_phrase_to_function_mapping(self):
         phrase_to_function = {}
@@ -85,13 +91,17 @@ class VoiceAssistant:
 
             if self.activation_word in transcription.lower():
                 self.activation_manager.activate()
-                self.lower_system_volume()
+                if not self.volume_lowered:
+                    self.lower_system_volume()
+                    self.volume_lowered = True
                 logging.info("Activation word detected. Voice assistant activated.")
                 print("Activation word detected. Voice assistant activated.")
                 continue  # Skip processing the activation word
 
             if self.activation_manager.is_active() or self.bulk_add_mode:
-                self.restore_system_volume()  # Restore volume before handling transcription
+                if self.volume_lowered:
+                    self.restore_system_volume()
+                    self.volume_lowered = False
                 response = self.handle_transcription(transcription)
                 if response:
                     self.speak(response)
@@ -100,21 +110,29 @@ class VoiceAssistant:
             self.mic.transcription_queue.task_done()
 
     def lower_system_volume(self):
-        devices = AudioUtilities.GetSpeakers()
-        interface = devices.Activate(
-            IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-        volume = cast(interface, POINTER(IAudioEndpointVolume))
-        self.original_volume = volume.GetMasterVolumeLevel()
-        volume.SetMasterVolumeLevel(-30.0, None)  # Lower volume to 10%
-        logging.info("System volume lowered to 10%.")
+        if platform.system() == "Windows":
+            devices = AudioUtilities.GetSpeakers()
+            interface = devices.Activate(
+                IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+            volume = cast(interface, POINTER(IAudioEndpointVolume))
+            self.original_volume = volume.GetMasterVolumeLevel()
+            volume.SetMasterVolumeLevel(-30.0, None)  # Lower volume to 10%
+            logging.info("System volume lowered to 10%.")
+        elif platform.system() == "Darwin":  # macOS
+            self.original_volume = subprocess.check_output(["osascript", "-e", "output volume of (get volume settings)"]).strip()
+            subprocess.call(["osascript", "-e", "set volume output volume 10"])  # Lower volume to 10%
+            logging.info("System volume lowered to 10%.")
 
     def restore_system_volume(self):
-        if self.original_volume is not None:
+        if platform.system() == "Windows" and self.original_volume is not None:
             devices = AudioUtilities.GetSpeakers()
             interface = devices.Activate(
                 IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
             volume = cast(interface, POINTER(IAudioEndpointVolume))
             volume.SetMasterVolumeLevel(self.original_volume, None)  # Restore original volume
+            logging.info("System volume restored to original level.")
+        elif platform.system() == "Darwin" and self.original_volume is not None:  # macOS
+            subprocess.call(["osascript", "-e", f"set volume output volume {self.original_volume}"])  # Restore original volume
             logging.info("System volume restored to original level.")
 
     def save_audio_transcription(self):
@@ -278,7 +296,6 @@ class VoiceAssistant:
         tasks = self.todo_list.get_tasks()
         self.task_display.update_tasks([f"{i+1}. {t['task']}" for i, t in enumerate(tasks)])
         self.task_display.root.after(0, self.task_display.root.deiconify)  # Show the GUI
-
 
     def open_file(self, transcription):
         activation_phrases = self.phrases_to_functions.get("open_file", [])

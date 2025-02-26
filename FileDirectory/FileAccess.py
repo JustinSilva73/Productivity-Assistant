@@ -2,8 +2,12 @@ import os
 import subprocess
 import platform
 from fuzzywuzzy import process
-
-file_direct = 'C:/Users/justi/Server'
+if platform.system() == 'Windows':
+    file_direct = 'C:/Users/justi/Server'
+elif platform.system() == 'Darwin':  # macOS
+    file_direct = '/Users/justinend/Library/Mobile Documents/com~apple~CloudDocs/Desktop/Projects'
+else:
+    file_direct = '/path/to/default/directory'
 
 class FileAccess:
     def __init__(self):
